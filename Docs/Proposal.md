@@ -1,8 +1,8 @@
 # Project Proposal: TinyTelemetry Protocol v1
 
-**Team Name:** [Your Team Name]  
-**Team Members:** [Names and IDs]  
-**Date:** October 2025  
+**Team Name:** [Your Team Name]
+**Team Members:** [Names and IDs]
+**Date:** October 2025
 **Project:** IoT Telemetry Protocol (Sensor Reporting)
 
 ---
@@ -102,7 +102,7 @@ Sensor                               Collector
   |                                      |
   |---- DATA (seq=2, temp=23.8) ------->|  Log reading, expect seq=2 ✓
   |                                      |
-  |  X  DATA (seq=3) lost in network    |  
+  |  X  DATA (seq=3) lost in network    |
   |                                      |
   |---- DATA (seq=4, temp=24.1) ------->|  Gap detected! Missing seq=3
   |                                      |  (Log gap but no recovery)
@@ -244,12 +244,12 @@ TinyTelemetry addresses the need for an ultra-lightweight, loss-tolerant telemet
 
 **Project Team Signatures:**
 
-[Team Member 1 - Name & ID]  
-[Team Member 2 - Name & ID]  
-[Team Member 3 - Name & ID]  
-[Team Member 4 - Name & ID]  
+[Team Member 1 - Name & ID]
+[Team Member 2 - Name & ID]
+[Team Member 3 - Name & ID]
+[Team Member 4 - Name & ID]
 
 ---
 
-**Proposal Submission Date:** [Date]  
+**Proposal Submission Date:** [Date]
 **Target Phase 1 Completion:** Week 7

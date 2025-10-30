@@ -1,7 +1,7 @@
 # Phase 1 Completion Checklist
 
-**Project:** TinyTelemetry Protocol v1  
-**Team:** [Your Team Name]  
+**Project:** TinyTelemetry Protocol v1
+**Team:** [Your Team Name]
 **Due:** Week 7
 
 ---
@@ -38,13 +38,13 @@
   - [x] Per-device state tracking
   - [x] Duplicate detection
   - [x] Sequence gap detection
-  
+
 - [x] **Client implementation:** `src/client.py`
   - [x] Sends INIT message on startup
   - [x] Sends DATA messages periodically
   - [x] Proper header encoding
   - [x] JSON payload with temperature/humidity
-  
+
 - [x] **Protocol module:** `src/protocol.py`
   - [x] pack_header() function
   - [x] unpack_header() function
@@ -83,7 +83,7 @@
   - [ ] Explain sequence numbers
   - [ ] Show baseline test script execution
   - [ ] Total duration ≤ 5 minutes
-  
+
 - [ ] **Upload to YouTube/Google Drive/OneDrive**
   - [ ] Set access to "Anyone with the link can view"
   - [ ] Test link in incognito/private browser
@@ -232,5 +232,5 @@ Phase1_TinyTelemetry_[TeamName].zip
 
 ---
 
-**Last Updated:** [Date]  
+**Last Updated:** [Date]
 **Completed By:** [Names]

@@ -1,10 +1,10 @@
 # Mini-RFC: TinyTelemetry Protocol v1
 ## Lightweight Telemetry Protocol for IoT Sensor Networks
 
-**Protocol Name:** TinyTelemetry  
-**Version:** 1.0  
-**Authors:** [Your Team Names]  
-**Date:** October 2025  
+**Protocol Name:** TinyTelemetry
+**Version:** 1.0
+**Authors:** [Your Team Names]
+**Date:** October 2025
 **Status:** Phase 1 Draft (Sections 1-3)
 
 ---
@@ -204,7 +204,7 @@ flags = 0
 # Combine version and msg_type into one byte
 version_and_type = (version << 4) | (msg_type & 0x0F)
 
-header = struct.pack('!BHHIB', 
+header = struct.pack('!BHHIB',
                      version_and_type,  # 0x11
                      device_id,         # 1001
                      seq_num,           # 42
@@ -334,5 +334,5 @@ TinyTelemetry sacrifices features for simplicity and minimal overhead.
 
 ---
 
-**End of Phase 1 Mini-RFC Draft**  
+**End of Phase 1 Mini-RFC Draft**
 **Sections 4-7 will be completed in Phase 2**
