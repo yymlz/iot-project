@@ -33,6 +33,7 @@ iot-project/
 ## ✅ 2. Protocol Implementation
 
 ### Header Format (10 bytes)
+
 ```
 Byte 0:    Version (4 bits) + MsgType (4 bits)
 Bytes 1-2: Device ID (16 bits)
@@ -42,11 +43,14 @@ Byte 9:    Flags (8 bits, reserved)
 ```
 
 ### Message Types Implemented
+
 - **INIT (0x0):** Initial handshake from sensor
 - **DATA (0x1):** Telemetry reading with JSON payload
 - **HEARTBEAT (0x2):** Reserved for Phase 2
+- **Error (0x3):** Reserved for next phase
 
 ### Key Features
+
 - ✅ Network byte order (big-endian) encoding
 - ✅ Struct packing: `'!BHHIB'`
 - ✅ Helper functions for pack/unpack
@@ -59,6 +63,7 @@ Byte 9:    Flags (8 bits, reserved)
 **File:** `src/server.py`
 
 ### Features Implemented
+
 - ✅ UDP socket listener (default port 5000)
 - ✅ Parse incoming packets using protocol module
 - ✅ Per-device state tracking (last seq, timestamp, packet count)
@@ -69,6 +74,7 @@ Byte 9:    Flags (8 bits, reserved)
 - ✅ Statistics summary on shutdown
 
 ### Example Output
+
 ```
 [SERVER] TinyTelemetry Collector v1 started
 [SERVER] Listening on 127.0.0.1:5000
@@ -85,6 +91,7 @@ Byte 9:    Flags (8 bits, reserved)
 **File:** `src/client.py`
 
 ### Features Implemented
+
 - ✅ UDP socket client
 - ✅ Sends **INIT** message on startup (seq=0)
 - ✅ Sends **DATA** messages periodically (default 1s interval, 60s duration)
@@ -94,6 +101,7 @@ Byte 9:    Flags (8 bits, reserved)
 - ✅ Configurable via command-line arguments
 
 ### Usage
+
 ```bash
 python3 client.py [device_id] [interval] [duration]
 
@@ -109,6 +117,7 @@ python3 client.py 2001 5 30          # Device 2001, 5s interval, 30s
 **File:** `tests/baseline_test.sh`
 
 ### What It Does
+
 1. Creates timestamped log directory
 2. Starts server in background
 3. Runs client for 60 seconds (1s interval)
@@ -117,12 +126,14 @@ python3 client.py 2001 5 30          # Device 2001, 5s interval, 30s
 6. Checks acceptance criteria (≥99% delivery)
 
 ### Expected Results
+
 - Total packets: ~61 (1 INIT + 60 DATA)
 - Success rate: ≥99%
 - No sequence gaps (local network)
 - Test result: **PASS** ✅
 
 ### Usage
+
 ```bash
 cd tests
 ./baseline_test.sh
@@ -133,7 +144,9 @@ cd tests
 ## ✅ 6. Documentation
 
 ### Proposal (`Docs/Proposal.md`)
+
 **Sections:**
+
 - Project scenario selection
 - Motivation (why TinyTelemetry is needed)
 - Protocol approach and design principles
@@ -145,12 +158,15 @@ cd tests
 **Status:** ✅ Complete (needs PDF export)
 
 ### Mini-RFC (`Docs/Mini_RFC_Draft.md`)
+
 **Sections:**
+
 - ✅ **Section 1:** Introduction (purpose, motivation, constraints)
 - ✅ **Section 2:** Protocol Architecture (entities, FSM, communication model)
 - ✅ **Section 3:** Message Formats (header table, sample messages, byte offsets)
 
 **Includes:**
+
 - Complete header field definitions
 - Sample INIT and DATA messages in hex
 - Struct packing format
@@ -160,7 +176,9 @@ cd tests
 **Status:** ✅ Complete (needs PDF export)
 
 ### README (`README.txt`)
+
 **Sections:**
+
 - Protocol overview
 - Header format table
 - System requirements
@@ -180,6 +198,7 @@ cd tests
 ### Before Submission
 
 1. **Export Documents to PDF**
+
    ```bash
    # Convert Markdown to PDF (use VS Code, Pandoc, or online converter)
    Proposal.md → Proposal.pdf
@@ -187,6 +206,7 @@ cd tests
    ```
 
 2. **Record Demo Video (5 minutes max)**
+
    - [ ] Introduce team and protocol
    - [ ] Show header format in code
    - [ ] Demo: Start server
@@ -198,6 +218,7 @@ cd tests
    - [ ] Add link to README.txt
 
 3. **Test on Fresh Environment** (optional but recommended)
+
    ```bash
    # Verify instructions work from scratch
    python3 --version  # Check Python 3.7+
@@ -208,6 +229,7 @@ cd tests
    ```
 
 4. **Create Submission Package**
+
    ```bash
    cd /Users/yousseftarek/Documents/iot-project/iot-project
    zip -r Phase1_TinyTelemetry.zip \
@@ -228,17 +250,17 @@ cd tests
 
 ## ✅ ACCEPTANCE CRITERIA CHECK
 
-| Criterion | Status | Evidence |
-|-----------|--------|----------|
-| Proposal clarity | ✅ | Docs/Proposal.md complete |
-| Feasibility | ✅ | Code runs, tests pass |
-| Initial message format correctness | ✅ | 10-byte header with correct fields |
-| Code runs locally | ✅ | Verified with verify.sh |
-| Logs present | ✅ | Server prints detailed logs |
-| Demo video link | ⏳ | Needs recording |
-| Prototype demonstrates INIT | ✅ | Client sends INIT on start |
-| Prototype demonstrates DATA | ✅ | Client sends periodic DATA |
-| Core functionality | ✅ | INIT + DATA exchange works |
+| Criterion                          | Status | Evidence                           |
+| ---------------------------------- | ------ | ---------------------------------- |
+| Proposal clarity                   | ✅     | Docs/Proposal.md complete          |
+| Feasibility                        | ✅     | Code runs, tests pass              |
+| Initial message format correctness | ✅     | 10-byte header with correct fields |
+| Code runs locally                  | ✅     | Verified with verify.sh            |
+| Logs present                       | ✅     | Server prints detailed logs        |
+| Demo video link                    | ⏳     | Needs recording                    |
+| Prototype demonstrates INIT        | ✅     | Client sends INIT on start         |
+| Prototype demonstrates DATA        | ✅     | Client sends periodic DATA         |
+| Core functionality                 | ✅     | INIT + DATA exchange works         |
 
 ---
 
@@ -270,11 +292,13 @@ cd /Users/yousseftarek/Documents/iot-project/iot-project/tests
 ## 📊 PROTOCOL EFFICIENCY
 
 **Sample DATA packet:**
+
 - Header: 10 bytes
 - Payload: `{"temperature": 23.5, "humidity": 58.2}` = 37 bytes
 - **Total: 47 bytes**
 
 **Bandwidth usage (60s test, 1s interval):**
+
 - INIT: 10 bytes
 - DATA: 60 × 47 = 2,820 bytes
 - **Total: 2,830 bytes (~23.6 bytes/sec)**
@@ -284,32 +308,38 @@ cd /Users/yousseftarek/Documents/iot-project/iot-project/tests
 ## 🎬 DEMO VIDEO SCRIPT (5 minutes)
 
 **Slide 1 (30s): Introduction**
+
 - "Hello, we're [Team Name]"
 - "Presenting TinyTelemetry Protocol v1"
 - "IoT telemetry over UDP with 10-byte header"
 
 **Slide 2 (1m): Protocol Design**
+
 - Show header format table
 - Explain each field (Version, MsgType, DeviceID, SeqNum, Timestamp, Flags)
 - Show protocol.py code snippet
 
 **Slide 3 (1m30s): Live Demo - Server**
+
 - Open terminal
 - `cd src && python3 server.py`
 - Show server listening
 
 **Slide 4 (1m): Live Demo - Client**
+
 - Open second terminal
 - `python3 client.py`
 - Show INIT message in server
 - Show DATA messages flowing
 
 **Slide 5 (30s): Explain Output**
+
 - Point to sequence numbers
 - Explain JSON payload
 - Show no errors or gaps
 
 **Slide 6 (30s): Baseline Test**
+
 - `cd tests && ./baseline_test.sh`
 - Show test running
 - Show PASS result

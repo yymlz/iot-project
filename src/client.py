@@ -12,7 +12,7 @@ from datetime import datetime
 from protocol import TinyTelemetryProtocol, MSG_INIT, MSG_DATA
 
 class TelemetrySensor:
-    def __init__(self, device_id, server_host='127.0.0.1', server_port=5000):
+    def __init__(self, device_id, server_host=socket.gethostbyname(socket.gethostname()), server_port=5000):
         self.device_id = device_id
         self.server_host = server_host
         self.server_port = server_port
@@ -125,7 +125,7 @@ class TelemetrySensor:
 def main():
     """Main entry point"""
     device_id = 1001
-    server_host = '127.0.0.1'
+    server_host = socket.gethostbyname(socket.gethostname())
     server_port = 5000
     interval = 1  # seconds
     duration = 60  # seconds

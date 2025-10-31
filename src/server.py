@@ -11,7 +11,7 @@ from datetime import datetime
 from protocol import TinyTelemetryProtocol, MSG_INIT, MSG_DATA, MSG_HEARTBEAT
 
 class TelemetryCollector:
-    def __init__(self, host='127.0.0.1', port=5000):
+    def __init__(self, host=socket.gethostbyname(socket.gethostname()), port=5000):
         self.host = host
         self.port = port
         self.socket = None
@@ -137,7 +137,7 @@ class TelemetryCollector:
 
 def main():
     """Main entry point"""
-    host = '127.0.0.1'
+    host = socket.gethostbyname(socket.gethostname())
     port = 5000
 
     if len(sys.argv) > 1:
