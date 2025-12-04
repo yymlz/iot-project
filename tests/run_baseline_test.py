@@ -6,7 +6,7 @@ print("=== TinyTelemetry Baseline Local Test ===")
 # 1. Start server process (logs output to file)
 server_log = open("server_log.txt", "w")
 server_proc = subprocess.Popen(
-    ["python", "D:\\iot-project\\src\\server.py"],
+    ["python", os.path.join("..", "src", "server.py")],
     stdout=server_log,
     stderr=subprocess.STDOUT
 )
@@ -16,7 +16,7 @@ print("Server started...")
 time.sleep(1)
 
 # 3. Run client process (prints to console)
-subprocess.run(["python", "D:\\iot-project\\src\\client.py"])
+subprocess.run(["python", os.path.join("..", "src", "client.py")])
 
 # 4. Allow a few seconds for final packets
 time.sleep(2)

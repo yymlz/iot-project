@@ -65,7 +65,6 @@ class TinyTelemetryProtocol:
                            seq_num,
                            timestamp,
                            flags)
-
         return header
 
     @staticmethod

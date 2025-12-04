@@ -9,7 +9,7 @@ import time
 import json
 import random
 from datetime import datetime
-from protocol import TinyTelemetryProtocol, MSG_INIT, MSG_DATA
+from protocol import TinyTelemetryProtocol, MSG_INIT, MSG_DATA, MSG_HEARTBEAT
 
 class TelemetrySensor:
     def __init__(self, device_id, server_host=socket.gethostbyname(socket.gethostname()), server_port=5000):
@@ -18,6 +18,9 @@ class TelemetrySensor:
         self.server_port = server_port
         self.socket = None
         self.seq_num = 0
+        self.packet_loss_rate = 0.0  # 0.0 = 0%, 0.1 = 10%, 0.15 = 15%
+        self.jitter_max = 0.0  # Maximum jitter in seconds (e.g., 0.5 = 500ms)
+        
 
     def connect(self):
         """Create UDP socket"""
@@ -40,6 +43,17 @@ class TelemetrySensor:
         self.seq_num += 1
 
     def send_data(self, temperature, humidity):
+        # Simulate packet loss
+        if random.random() < self.packet_loss_rate:
+            print(f"[{datetime.now().strftime('%H:%M:%S')}] [SIMULATED LOSS] Packet seq {self.seq_num} dropped!")
+            self.seq_num += 1  # Still increment seq so server detects gap
+            return  # Don't send the packet
+
+        # Simulate network jitter (random delay)
+        if self.jitter_max > 0:
+            delay = random.uniform(0, self.jitter_max)
+            time.sleep(delay)
+        
         """Send DATA message with sensor readings"""
         # Create JSON payload
         payload_dict = {
@@ -97,6 +111,10 @@ class TelemetrySensor:
             print(f"\n[SENSOR] Starting data transmission (interval: {interval}s, duration: {duration}s)")
             print("-" * 80)
 
+            # Send HEARTBEAT messages periodically
+            last_heartbeat_time = start_time
+            heartbeat_interval = 10  # seconds
+
             while time.time() - start_time < duration:
                 current_time = time.time()
 
@@ -107,6 +125,12 @@ class TelemetrySensor:
 
                     # Schedule next send
                     next_send_time += interval
+                    last_heartbeat_time = current_time
+                
+                #send HEARTBEAT if no data has been sent recently
+                if current_time - last_heartbeat_time >= heartbeat_interval:
+                    self.send_heartbeat()
+                    last_heartbeat_time = current_time
 
                 # Small sleep to prevent busy waiting
                 time.sleep(0.01)
@@ -121,6 +145,19 @@ class TelemetrySensor:
         finally:
             if self.socket:
                 self.socket.close()
+
+    def send_heartbeat(self):
+        """Send HEARTBEAT message to server"""
+        message = TinyTelemetryProtocol.create_message(
+            msg_type=MSG_HEARTBEAT,
+            device_id=self.device_id,
+            seq_num=self.seq_num
+        )
+
+        self.socket.sendto(message, (self.server_host, self.server_port))
+        print(f"[{datetime.now().strftime('%H:%M:%S')}] Sent HEARTBEAT message (seq: {self.seq_num})")
+        self.seq_num += 1
+
 
 def main():
     """Main entry point"""
@@ -137,8 +174,12 @@ def main():
         interval = float(sys.argv[2])
     if len(sys.argv) > 3:
         duration = int(sys.argv[3])
-
     sensor = TelemetrySensor(device_id, server_host, server_port)
+    if len(sys.argv) > 4:
+        sensor.packet_loss_rate = float(sys.argv[4])  # e.g., 0.1 for 10% packet loss
+    if len(sys.argv) > 5:
+        sensor.jitter_max = float(sys.argv[5])  # e.g., 0.5 for 500ms max jitter
+    
     sensor.run(interval, duration)
 
 if __name__ == '__main__':
