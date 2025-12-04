@@ -8,6 +8,7 @@ import sys
 import time
 import json
 import random
+import threading
 from datetime import datetime
 from protocol import TinyTelemetryProtocol, MSG_INIT, MSG_DATA, MSG_HEARTBEAT
 
@@ -20,12 +21,13 @@ class TelemetrySensor:
         self.seq_num = 0
         self.packet_loss_rate = 0.0  # 0.0 = 0%, 0.1 = 10%, 0.15 = 15%
         self.jitter_max = 0.0  # Maximum jitter in seconds (e.g., 0.5 = 500ms)
-        
+        self.batch_size = 0  # Number of messages to batch before sending
+        self.batch_buffer = []
 
     def connect(self):
         """Create UDP socket"""
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        print(f"[SENSOR] TinyTelemetry Sensor v1")
+        print("[SENSOR] TinyTelemetry Sensor v1")
         print(f"[SENSOR] Device ID: {self.device_id}")
         print(f"[SENSOR] Target server: {self.server_host}:{self.server_port}")
         print("-" * 80)
@@ -49,11 +51,19 @@ class TelemetrySensor:
             self.seq_num += 1  # Still increment seq so server detects gap
             return  # Don't send the packet
 
-        # Simulate network jitter (random delay)
-        if self.jitter_max > 0:
-            delay = random.uniform(0, self.jitter_max)
-            time.sleep(delay)
-        
+        if self.batch_size > 0:
+            """Buffer reading for batch sending"""
+            reading = {
+                'seq_num': self.seq_num,
+                'temperature': round(temperature, 2),
+                'humidity': round(humidity, 2)
+            }
+            self.batch_buffer.append(reading)
+            self.seq_num += 1
+            if len(self.batch_buffer) >= self.batch_size:
+                self.send_batch()
+            return
+
         """Send DATA message with sensor readings"""
         # Create JSON payload
         payload_dict = {
@@ -62,18 +72,56 @@ class TelemetrySensor:
         }
         payload = json.dumps(payload_dict).encode('utf-8')
 
-        # Create and send message
+        # Create message
         message = TinyTelemetryProtocol.create_message(
             msg_type=MSG_DATA,
             device_id=self.device_id,
             seq_num=self.seq_num,
             payload=payload
         )
-
-        self.socket.sendto(message, (self.server_host, self.server_port))
-        print(f"[{datetime.now().strftime('%H:%M:%S')}] Sent DATA (seq: {self.seq_num}): "
-              f"temp={temperature:.1f}°C, humidity={humidity:.1f}%")
+        
+        current_seq = self.seq_num  # Capture for logging
+        
+        # Simulate network jitter using threading (packets can overtake each other)
+        if self.jitter_max > 0:
+            delay = random.uniform(0, self.jitter_max)
+            # Create a thread that waits, then sends
+            def delayed_send(msg, seq, delay_time, temp, hum):
+                time.sleep(delay_time)
+                self.socket.sendto(msg, (self.server_host, self.server_port))
+                print(f"[{datetime.now().strftime('%H:%M:%S')}] Sent DATA (seq: {seq}, delay: {delay_time*1000:.0f}ms): "
+                      f"temp={temp:.1f}°C, humidity={hum:.1f}%")
+            
+            thread = threading.Thread(target=delayed_send, args=(message, current_seq, delay, temperature, humidity))
+            thread.daemon = True
+            thread.start()
+        else:
+            # No jitter - send immediately
+            self.socket.sendto(message, (self.server_host, self.server_port))
+            print(f"[{datetime.now().strftime('%H:%M:%S')}] Sent DATA (seq: {self.seq_num}): "
+                  f"temp={temperature:.1f}°C, humidity={humidity:.1f}%")
+        
         self.seq_num += 1
+
+    def send_batch(self):
+        """Send all buffered readings as a single BATCH message"""
+        if not self.batch_buffer:
+            return
+        
+        # Use the last reading's seq_num as the batch packet seq
+        last_seq = self.batch_buffer[-1]['seq_num']
+        
+        payload = json.dumps(self.batch_buffer).encode('utf-8')
+        message = TinyTelemetryProtocol.create_message(
+            msg_type=3,  # MSG_BATCH
+            device_id=self.device_id,
+            seq_num=last_seq,  # Use last reading's seq, not a new one
+            payload=payload
+        )
+        self.socket.sendto(message, (self.server_host, self.server_port))
+        print(f"[{datetime.now().strftime('%H:%M:%S')}] [BATCH] Sent {len(self.batch_buffer)} readings (seq {self.batch_buffer[0]['seq_num']}-{last_seq})")
+        # Don't increment seq_num - readings already have their seq numbers
+        self.batch_buffer = []  # Clear buffer
 
     def simulate_sensor_readings(self):
         """Generate realistic sensor readings"""
@@ -135,6 +183,11 @@ class TelemetrySensor:
                 # Small sleep to prevent busy waiting
                 time.sleep(0.01)
 
+            # Flush any remaining readings in batch buffer
+            if self.batch_buffer:
+                print(f"[SENSOR] Flushing {len(self.batch_buffer)} remaining readings from batch buffer...")
+                self.send_batch()
+
             print("-" * 80)
             print(f"[SENSOR] Transmission complete. Sent {self.seq_num} messages total.")
 
@@ -147,39 +200,58 @@ class TelemetrySensor:
                 self.socket.close()
 
     def send_heartbeat(self):
-        """Send HEARTBEAT message to server"""
+        """Send HEARTBEAT message to server (doesn't consume sequence number)"""
         message = TinyTelemetryProtocol.create_message(
             msg_type=MSG_HEARTBEAT,
             device_id=self.device_id,
-            seq_num=self.seq_num
+            seq_num=0  # Heartbeats don't need sequence tracking
         )
 
         self.socket.sendto(message, (self.server_host, self.server_port))
-        print(f"[{datetime.now().strftime('%H:%M:%S')}] Sent HEARTBEAT message (seq: {self.seq_num})")
-        self.seq_num += 1
+        print(f"[{datetime.now().strftime('%H:%M:%S')}] Sent HEARTBEAT message")
+        # Don't increment seq_num - heartbeats are just status signals
 
 
 def main():
     """Main entry point"""
+    # Default values
     device_id = 1001
-    server_host = socket.gethostbyname(socket.gethostname())
+    server_host = socket.gethostbyname(socket.gethostname())  # Default: localhost
     server_port = 5000
     interval = 1  # seconds
     duration = 60  # seconds
+    packet_loss_rate = 0.0
+    jitter_max = 0.0
+    batch_size = 0
 
     # Parse command line arguments
+    # Usage: python client.py <device_id> <interval> <duration> <loss_rate> <jitter_max> <batch_size> [server_ip]
     if len(sys.argv) > 1:
         device_id = int(sys.argv[1])
     if len(sys.argv) > 2:
         interval = float(sys.argv[2])
     if len(sys.argv) > 3:
         duration = int(sys.argv[3])
-    sensor = TelemetrySensor(device_id, server_host, server_port)
     if len(sys.argv) > 4:
-        sensor.packet_loss_rate = float(sys.argv[4])  # e.g., 0.1 for 10% packet loss
+        packet_loss_rate = float(sys.argv[4])
     if len(sys.argv) > 5:
-        sensor.jitter_max = float(sys.argv[5])  # e.g., 0.5 for 500ms max jitter
+        jitter_max = float(sys.argv[5])
+    if len(sys.argv) > 6:
+        batch_size = int(sys.argv[6])
+    if len(sys.argv) > 7:
+        server_host = sys.argv[7]  # Remote server IP
     
+    # Print configuration
+    print(f"[CONFIG] Server: {server_host}:{server_port}")
+    print(f"[CONFIG] Device ID: {device_id}, Interval: {interval}s, Duration: {duration}s")
+    print(f"[CONFIG] Loss Rate: {packet_loss_rate*100}%, Jitter Max: {jitter_max}s, Batch Size: {batch_size}")
+    print("-" * 80)
+    
+    # Create and configure sensor
+    sensor = TelemetrySensor(device_id, server_host, server_port)
+    sensor.packet_loss_rate = packet_loss_rate
+    sensor.jitter_max = jitter_max
+    sensor.batch_size = batch_size
     sensor.run(interval, duration)
 
 if __name__ == '__main__':
