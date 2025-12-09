@@ -11,6 +11,9 @@ import json
 from datetime import datetime
 from protocol import TinyTelemetryProtocol, MSG_INIT, MSG_DATA, MSG_HEARTBEAT
 
+# Maximum UDP application payload size (excluding header)
+MAX_UDP_PAYLOAD = 200  # bytes
+
 class TelemetryCollector:
     def __init__(self, host=socket.gethostbyname(socket.gethostname()), port=5000):
         self.host = host
@@ -25,6 +28,12 @@ class TelemetryCollector:
         self.total_lost = 0
         self.packet_buffer = []  # Buffer for reordering
         self.buffer_timeout = 2.0  # Wait 2 seconds before processing
+        
+        # Phase 2 Metrics
+        self.total_duplicates = 0        # Count of duplicate messages
+        self.sequence_gap_count = 0      # Number of gap events (not total missing)
+        self.total_bytes_received = 0    # Total bytes (header + payload)
+        self.total_cpu_time_ms = 0       # Total CPU time spent processing
 
     def start(self):
         """Start the UDP server"""
@@ -41,8 +50,8 @@ class TelemetryCollector:
         csv_filename = f"telemetry_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
         self.csv_file = open(csv_filename, 'w', newline='')
         self.csv_writer = csv.writer(self.csv_file)
-        # Write header row
-        self.csv_writer.writerow(['timestamp', 'device_id', 'seq_num', 'msg_type', 'temperature', 'humidity'])
+        # Write header row with duplicate_flag and gap_flag columns
+        self.csv_writer.writerow(['timestamp', 'device_id', 'seq_num', 'msg_type', 'temperature', 'humidity', 'duplicate_flag', 'gap_flag', 'packet_bytes'])
         self.csv_file.flush()
         print(f"[SERVER] Logging to: {csv_filename}")
 
@@ -90,10 +99,21 @@ class TelemetryCollector:
 
     def process_packet(self, data, addr):
         """Process received packet"""
+        cpu_start = time.perf_counter()  # Start CPU timing
+        
         try:
+            # Track total bytes received (header + payload)
+            packet_bytes = len(data)
+            self.total_bytes_received += packet_bytes
+            
             # Parse message
             header, payload = TinyTelemetryProtocol.parse_message(data)
             arrival_time = time.time()
+            
+            # Check payload size constraint (Phase 2 requirement: <= 200 bytes)
+            payload_size = len(payload) if payload else 0
+            if payload_size > MAX_UDP_PAYLOAD:
+                print(f"[WARNING] Payload size {payload_size} exceeds max {MAX_UDP_PAYLOAD} bytes!")
 
             device_id = header['device_id']
             seq_num = header['seq_num']
@@ -118,11 +138,13 @@ class TelemetryCollector:
             # Check for duplicate (skip for heartbeats - they all use seq 0)
             if msg_type != MSG_HEARTBEAT and seq_num == state['last_seq']:
                 duplicate_flag = True
+                self.total_duplicates += 1  # Track duplicate count
 
             # Check for sequence gap (skip for BATCH and HEARTBEAT messages)
             if msg_type not in [3, MSG_HEARTBEAT] and state['last_seq'] != -1 and seq_num > state['last_seq'] + 1:
                 gap_flag = True
                 gap_size = seq_num - state['last_seq'] - 1
+                self.sequence_gap_count += 1  # Track gap event count
                 print(f"[WARNING] Device {device_id}: Sequence gap detected! "
                       f"Missing {gap_size} packet(s) between seq {state['last_seq']} and {seq_num}")
 
@@ -159,21 +181,23 @@ class TelemetryCollector:
                     print(f"          [BATCH] {len(readings)} readings:")
                     
                     # Track last reading seq to detect gaps within batch
+                    # Initialize to 0 (INIT seq), so first DATA reading should be seq 1
                     last_reading_seq = state.get('last_reading_seq', 0)
                     
                     for reading in readings:
                         reading_seq = reading.get('seq_num', 0)
                         
-                        # Check for gap within batch
-                        if last_reading_seq > 0 and reading_seq > last_reading_seq + 1:
+                        # Check for gap within batch (detect if first reading isn't seq 1, or any subsequent gap)
+                        if reading_seq > last_reading_seq + 1:
                             gap_size = reading_seq - last_reading_seq - 1
                             print(f"            [LOST] Missing {gap_size} reading(s) between seq {last_reading_seq} and {reading_seq}")
                             self.total_lost += gap_size
+                            self.sequence_gap_count += 1
                         
                         # Display each reading
                         print(f"            Seq {reading_seq} | Temp: {reading.get('temperature')}, Hum: {reading.get('humidity')}")
                         
-                        # Log to CSV
+                        # Log to CSV with duplicate_flag and gap_flag
                         if self.csv_writer:
                             self.csv_writer.writerow([
                                 datetime.fromtimestamp(timestamp).strftime('%Y-%m-%d %H:%M:%S'),
@@ -181,7 +205,10 @@ class TelemetryCollector:
                                 reading_seq,
                                 'BATCH_DATA',
                                 reading.get('temperature'),
-                                reading.get('humidity')
+                                reading.get('humidity'),
+                                0,  # duplicate_flag (batch readings are pre-validated)
+                                0,  # gap_flag (handled separately)
+                                packet_bytes  # bytes for this packet
                             ])
                         
                         last_reading_seq = reading_seq
@@ -212,25 +239,12 @@ class TelemetryCollector:
                 loss_rate = (self.total_lost / (self.total_received + self.total_lost)) * 100
                 print(f"[STATISTICS] Total Received: {self.total_received}, Total Lost: {self.total_lost}, Loss Rate: {loss_rate:.2f}%")
 
-            # Write to CSV
-            if msg_type == MSG_DATA and payload_str:
-                try:
-                    payload_json = json.loads(payload_str)
-                    temperature = payload_json.get('temperature', '')
-                    humidity = payload_json.get('humidity', '')
-                except:
-                    temperature = ''
-                    humidity = ''
-
-                self.csv_writer.writerow([
-                    datetime.fromtimestamp(arrival_time).strftime('%Y-%m-%d %H:%M:%S'),
-                    device_id,
-                    seq_num,
-                    msg_type_str,
-                    temperature,
-                    humidity
-                ])
-                self.csv_file.flush()
+            # Note: CSV writing moved to display_packet() to avoid duplicates from reorder buffer
+            
+            # Record CPU time for this packet
+            cpu_end = time.perf_counter()
+            cpu_time_ms = (cpu_end - cpu_start) * 1000
+            self.total_cpu_time_ms += cpu_time_ms
 
             return {
                 'device_id': device_id,
@@ -240,7 +254,8 @@ class TelemetryCollector:
                 'duplicate_flag': duplicate_flag,
                 'gap_flag': gap_flag,
                 'msg_type': msg_type_str,
-                'payload': payload_str
+                'payload': payload_str,
+                'packet_bytes': packet_bytes
             }
 
         except Exception as e:
@@ -258,6 +273,7 @@ class TelemetryCollector:
         gap_flag = packet_info['gap_flag']
         addr = packet_info['addr']
         arrival_time = packet_info['arrival_time']
+        packet_bytes = packet_info.get('packet_bytes', 0)
         
         # Log to console
         flags_str = "[REORDERED] "
@@ -273,7 +289,7 @@ class TelemetryCollector:
         if payload_str:
             print(f"          Payload: {payload_str}")
         
-        # Write to CSV
+        # Write to CSV with duplicate_flag and gap_flag (only for non-BATCH DATA)
         if msg_type_str == 'DATA' and payload_str:
             try:
                 payload_json = json.loads(payload_str)
@@ -289,7 +305,10 @@ class TelemetryCollector:
                 seq_num,
                 msg_type_str,
                 temperature,
-                humidity
+                humidity,
+                1 if duplicate_flag else 0,
+                1 if gap_flag else 0,
+                packet_bytes
             ])
             self.csv_file.flush()
 
@@ -337,11 +356,49 @@ class TelemetryCollector:
                 self.socket.close()
 
     def print_statistics(self):
-        """Print server statistics"""
-        print("\n[STATISTICS]")
+        """Print server statistics including Phase 2 metrics"""
+        print("\n" + "=" * 80)
+        print("[FINAL STATISTICS]")
+        print("=" * 80)
+        
+        # Per-device stats
+        print("\n[Per-Device Statistics]")
         for device_id, state in self.device_state.items():
             print(f"  Device {device_id}: {state['packet_count']} packets received, "
                   f"{state['heartbeat_count']} heartbeats, last seq: {state['last_seq']}")
+        
+        # Phase 2 Required Metrics
+        print("\n[Phase 2 Metrics]")
+        print("-" * 40)
+        
+        # bytes_per_report: Average total bytes (payload + header) per reading
+        bytes_per_report = self.total_bytes_received / self.total_received if self.total_received > 0 else 0
+        print(f"  bytes_per_report:     {bytes_per_report:.2f} bytes")
+        
+        # packets_received: Count of successfully received packets
+        print(f"  packets_received:     {self.total_received}")
+        
+        # duplicate_rate: Fraction of duplicate messages detected
+        total_packets = self.total_received + self.total_duplicates
+        duplicate_rate = self.total_duplicates / total_packets if total_packets > 0 else 0
+        print(f"  duplicate_rate:       {duplicate_rate:.4f} ({self.total_duplicates} duplicates)")
+        
+        # sequence_gap_count: Number of missing sequences detected (gap events)
+        print(f"  sequence_gap_count:   {self.sequence_gap_count}")
+        print(f"  total_lost_packets:   {self.total_lost}")
+        
+        # cpu_ms_per_report: CPU time per reading processed
+        cpu_ms_per_report = self.total_cpu_time_ms / self.total_received if self.total_received > 0 else 0
+        print(f"  cpu_ms_per_report:    {cpu_ms_per_report:.4f} ms")
+        
+        # Additional useful metrics
+        print("\n[Additional Metrics]")
+        print("-" * 40)
+        loss_rate = (self.total_lost / (self.total_received + self.total_lost)) * 100 if (self.total_received + self.total_lost) > 0 else 0
+        print(f"  packet_loss_rate:     {loss_rate:.2f}%")
+        print(f"  total_bytes:          {self.total_bytes_received} bytes")
+        print(f"  total_cpu_time:       {self.total_cpu_time_ms:.2f} ms")
+        print("=" * 80)
 
 def main():
     """Main entry point"""

@@ -111,7 +111,30 @@ class TelemetrySensor:
         # Use the last reading's seq_num as the batch packet seq
         last_seq = self.batch_buffer[-1]['seq_num']
         
-        payload = json.dumps(self.batch_buffer).encode('utf-8')
+        # Create compact JSON (no spaces, 2 decimal places for floats)
+        compact_buffer = [
+            {
+                'seq_num': r['seq_num'],
+                'temperature': round(r['temperature'], 2),
+                'humidity': round(r['humidity'], 2)
+            }
+            for r in self.batch_buffer
+        ]
+        payload = json.dumps(compact_buffer, separators=(',', ':')).encode('utf-8')
+        
+        # Check payload size (max 200 bytes for Phase 2)
+        if len(payload) > 200:
+            print(f"[WARNING] Batch payload {len(payload)} bytes exceeds 200 byte limit! Splitting batch...")
+            # Split batch in half and send separately
+            mid = len(self.batch_buffer) // 2
+            first_half = self.batch_buffer[:mid]
+            second_half = self.batch_buffer[mid:]
+            self.batch_buffer = first_half
+            self.send_batch()  # Recursive call for first half
+            self.batch_buffer = second_half
+            self.send_batch()  # Recursive call for second half
+            return
+        
         message = TinyTelemetryProtocol.create_message(
             msg_type=3,  # MSG_BATCH
             device_id=self.device_id,
@@ -119,7 +142,7 @@ class TelemetrySensor:
             payload=payload
         )
         self.socket.sendto(message, (self.server_host, self.server_port))
-        print(f"[{datetime.now().strftime('%H:%M:%S')}] [BATCH] Sent {len(self.batch_buffer)} readings (seq {self.batch_buffer[0]['seq_num']}-{last_seq})")
+        print(f"[{datetime.now().strftime('%H:%M:%S')}] [BATCH] Sent {len(self.batch_buffer)} readings (seq {self.batch_buffer[0]['seq_num']}-{last_seq}) | {len(payload)} bytes")
         # Don't increment seq_num - readings already have their seq numbers
         self.batch_buffer = []  # Clear buffer
 
