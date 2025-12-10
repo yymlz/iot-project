@@ -71,3 +71,10 @@ sudo tc qdisc add dev lo root netem loss 10%
 python3 client.py 1003 1 30 0 0 3 127.0.0.1
 # Expected: retransmissions > 0, but all packets eventually delivered
 sudo tc qdisc del dev lo root
+
+# showing wireshark result
+sudo tcpdump -i lo -w /mnt/d/iot-project/logs/capture_$(date +%Y%m%d_%H%M%S).pcap port 5000
+wireshark /mnt/d/iot-project/logs/capture_*.pcap
+
+# test all 
+cd /mnt/d/iot-project/tests && sudo bash run_all_tests.sh

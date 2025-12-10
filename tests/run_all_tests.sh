@@ -13,7 +13,7 @@ set -e
 INTERFACE="${1:-lo}"
 SERVER_DIR="../src"
 LOG_DIR="../logs"
-RESULTS_FILE="$LOG_DIR/test_results_$(date +%Y%m%d_%H%M%S).txt"
+RESULTS_FILE="$LOG_DIR/test_results_$(date +%Y%m%d_%H%M%S).csv"
 
 # Colors
 GREEN='\033[0;32m'
@@ -63,6 +63,7 @@ run_test() {
         eval "tc qdisc add dev $INTERFACE root netem $netem_cmd"
     else
         echo -e "${YELLOW}No network impairment (baseline)${NC}"
+        netem_cmd="none"
     fi
     
     # Show current qdisc
@@ -74,6 +75,9 @@ run_test() {
     echo -e "${GREEN}Running client (Device $device_id, Duration ${duration}s, Batch $batch_size)...${NC}"
     cd "$SERVER_DIR"
     python3 client.py "$device_id" 1 "$duration" "$loss" "$jitter" "$batch_size" 127.0.0.1
+    
+    # Log to CSV
+    echo "\"$test_name\",$device_id,$duration,$batch_size,\"$netem_cmd\",\"$(date '+%Y-%m-%d %H:%M:%S')\"" >> "$RESULTS_FILE"
     
     # Clear netem
     clear_netem
@@ -94,57 +98,93 @@ echo -e "${YELLOW}Command: python3 src/server.py${NC}"
 echo ""
 read -p "Press Enter to start tests (or Ctrl+C to cancel)..."
 
-# Start logging
+# Start logging with CSV header
 {
-    echo "TinyTelemetry Test Suite Results"
-    echo "Date: $(date)"
-    echo "Interface: $INTERFACE"
-    echo "=========================================="
-    echo ""
+    echo "test_name,device_id,duration,batch_size,netem_config,timestamp"
 } > "$RESULTS_FILE"
 
 # Clear any existing rules
 clear_netem
 
-# TEST 1: Baseline (no impairment)
-run_test "Baseline - No Impairment" 1001 30 0 0 3 ""
+# TEST 1: Baseline (no impairment) - Different intervals
+run_test "Baseline - No Impairment (1s)" 1001 1 0 0 3 ""
+run_test "Baseline - No Impairment (5s)" 1002 5 0 0 3 ""
+run_test "Baseline - No Impairment (30s)" 1003 30 0 0 3 ""
 
-# TEST 2: Packet Loss Tests
-run_test "Packet Loss 5%" 1002 30 0 0 3 "loss 5%"
-run_test "Packet Loss 10%" 1003 30 0 0 3 "loss 10%"
-run_test "Packet Loss 15%" 1004 30 0 0 3 "loss 15%"
+# TEST 2: Packet Loss Tests (1s, 5s, 30s)
+run_test "Packet Loss 5% (1s)" 1004 1 0 0 3 "loss 5%"
+run_test "Packet Loss 5% (5s)" 1005 5 0 0 3 "loss 5%"
+run_test "Packet Loss 5% (30s)" 1006 30 0 0 3 "loss 5%"
+run_test "Packet Loss 10% (1s)" 1007 1 0 0 3 "loss 10%"
+run_test "Packet Loss 10% (5s)" 1008 5 0 0 3 "loss 10%"
+run_test "Packet Loss 10% (30s)" 1009 30 0 0 3 "loss 10%"
+run_test "Packet Loss 15% (1s)" 1010 1 0 0 3 "loss 15%"
+run_test "Packet Loss 15% (5s)" 1011 5 0 0 3 "loss 15%"
+run_test "Packet Loss 15% (30s)" 1012 30 0 0 3 "loss 15%"
 
-# TEST 3: Delay Tests
-run_test "Delay 50ms" 1005 30 0 0 3 "delay 50ms"
-run_test "Delay 100ms" 1006 30 0 0 3 "delay 100ms"
-run_test "Delay 200ms" 1007 30 0 0 3 "delay 200ms"
+# # TEST 3: Delay Tests (1s, 5s, 30s)
+# run_test "Delay 50ms (1s)" 1013 1 0 0 3 "delay 50ms"
+# run_test "Delay 50ms (5s)" 1014 5 0 0 3 "delay 50ms"
+# run_test "Delay 50ms (30s)" 1015 30 0 0 3 "delay 50ms"
+# run_test "Delay 100ms (1s)" 1016 1 0 0 3 "delay 100ms"
+# run_test "Delay 100ms (5s)" 1017 5 0 0 3 "delay 100ms"
+# run_test "Delay 100ms (30s)" 1018 30 0 0 3 "delay 100ms"
+# run_test "Delay 200ms (1s)" 1019 1 0 0 3 "delay 200ms"
+# run_test "Delay 200ms (5s)" 1020 5 0 0 3 "delay 200ms"
+# run_test "Delay 200ms (30s)" 1021 30 0 0 3 "delay 200ms"
 
-# TEST 4: Jitter Tests
-run_test "Jitter (100ms ± 20ms)" 1008 30 0 0 3 "delay 100ms 20ms"
-run_test "Jitter (100ms ± 50ms)" 1009 30 0 0 3 "delay 100ms 50ms"
+# TEST 4: Jitter Tests (1s, 5s, 30s)
+run_test "Jitter (100ms ± 10ms) (1s)" 1022 1 0 0 3 "delay 100ms 10ms"
+run_test "Jitter (100ms ± 10ms) (5s)" 1023 5 0 0 3 "delay 100ms 10ms"
+run_test "Jitter (100ms ± 10ms) (30s)" 1024 30 0 0 3 "delay 100ms 10ms"
+# run_test "Jitter (100ms ± 50ms) (1s)" 1025 1 0 0 3 "delay 100ms 50ms"
+# run_test "Jitter (100ms ± 50ms) (5s)" 1026 5 0 0 3 "delay 100ms 50ms"
+# run_test "Jitter (100ms ± 50ms) (30s)" 1027 30 0 0 3 "delay 100ms 50ms"
 
-# TEST 5: Packet Reordering
-run_test "Reordering 25%" 1010 30 0 0 3 "delay 10ms reorder 25% 50%"
-run_test "Reordering 50%" 1011 30 0 0 3 "delay 10ms reorder 50% 50%"
+# # TEST 5: Packet Reordering (1s, 5s, 30s)
+# run_test "Reordering 25% (1s)" 1028 1 0 0 3 "delay 10ms reorder 25% 50%"
+# run_test "Reordering 25% (5s)" 1029 5 0 0 3 "delay 10ms reorder 25% 50%"
+# run_test "Reordering 25% (30s)" 1030 30 0 0 3 "delay 10ms reorder 25% 50%"
+# run_test "Reordering 50% (1s)" 1031 1 0 0 3 "delay 10ms reorder 50% 50%"
+# run_test "Reordering 50% (5s)" 1032 5 0 0 3 "delay 10ms reorder 50% 50%"
+# run_test "Reordering 50% (30s)" 1033 30 0 0 3 "delay 10ms reorder 50% 50%"
 
-# TEST 6: Packet Duplication
-run_test "Duplication 5%" 1012 30 0 0 3 "duplicate 5%"
+# TEST 6: Packet Duplication (1s, 5s, 30s)
+run_test "Duplication 5% (1s)" 1034 1 0 0 3 "duplicate 5%"
+run_test "Duplication 5% (5s)" 1035 5 0 0 3 "duplicate 5%"
+run_test "Duplication 5% (30s)" 1036 30 0 0 3 "duplicate 5%"
 
-# TEST 7: Combined Impairments
-run_test "Combined Light (5% loss + 50ms delay)" 1013 30 0 0 3 "loss 5% delay 50ms"
-run_test "Combined Medium (10% loss + 100ms delay + jitter)" 1014 30 0 0 3 "loss 10% delay 100ms 20ms"
-run_test "Combined Harsh (15% loss + 200ms + reorder)" 1015 30 0 0 3 "loss 15% delay 200ms reorder 25% 50%"
+# TEST 7: Combined Impairments (1s, 5s, 30s)
+run_test "Combined Light (5% loss + 50ms delay) (1s)" 1037 1 0 0 3 "loss 5% delay 50ms"
+run_test "Combined Light (5% loss + 50ms delay) (5s)" 1038 5 0 0 3 "loss 5% delay 50ms"
+run_test "Combined Light (5% loss + 50ms delay) (30s)" 1039 30 0 0 3 "loss 5% delay 50ms"
+run_test "Combined Medium (10% loss + 100ms delay + jitter) (1s)" 1040 1 0 0 3 "loss 10% delay 100ms 10ms"
+run_test "Combined Medium (10% loss + 100ms delay + jitter) (5s)" 1041 5 0 0 3 "loss 10% delay 100ms 10ms"
+run_test "Combined Medium (10% loss + 100ms delay + jitter) (30s)" 1042 30 0 0 3 "loss 10% delay 100ms 10ms"
+run_test "Combined Harsh (15% loss + 200ms + reorder) (1s)" 1043 1 0 0 3 "loss 15% delay 200ms reorder 25% 50%"
+run_test "Combined Harsh (15% loss + 200ms + reorder) (5s)" 1044 5 0 0 3 "loss 15% delay 200ms reorder 25% 50%"
+run_test "Combined Harsh (15% loss + 200ms + reorder) (30s)" 1045 30 0 0 3 "loss 15% delay 200ms reorder 25% 50%"
 
-# TEST 8: Batch Size Tests (with 10% loss)
-run_test "Batch Size 1 (10% loss)" 1016 30 0 0 1 "loss 10%"
-run_test "Batch Size 5 (10% loss)" 1017 30 0 0 5 "loss 10%"
-run_test "Batch Size 10 (10% loss)" 1018 30 0 0 10 "loss 10%"
+# # TEST 8: Batch Size Tests (with 10% loss) (1s, 5s, 30s)
+# run_test "Batch Size 1 (10% loss) (1s)" 1046 1 0 0 1 "loss 10%"
+# run_test "Batch Size 1 (10% loss) (5s)" 1047 5 0 0 1 "loss 10%"
+# run_test "Batch Size 1 (10% loss) (30s)" 1048 30 0 0 1 "loss 10%"
+# run_test "Batch Size 5 (10% loss) (1s)" 1049 1 0 0 5 "loss 10%"
+# run_test "Batch Size 5 (10% loss) (5s)" 1050 5 0 0 5 "loss 10%"
+# run_test "Batch Size 5 (10% loss) (30s)" 1051 30 0 0 5 "loss 10%"
+# run_test "Batch Size 10 (10% loss) (1s)" 1052 1 0 0 10 "loss 10%"
+# run_test "Batch Size 10 (10% loss) (5s)" 1053 5 0 0 10 "loss 10%"
+# run_test "Batch Size 10 (10% loss) (30s)" 1054 30 0 0 10 "loss 10%"
 
-# TEST 9: Client-side Loss + Network Loss
-run_test "Client Loss 5% + Network Loss 5%" 1019 30 0.05 0 3 "loss 5%"
+# TEST 9: Client-side Loss + Network Loss (1s, 5s, 30s)
+run_test "Client Loss 5% + Network Loss 5% (1s)" 1055 1 0.05 0 3 "loss 5%"
+run_test "Client Loss 5% + Network Loss 5% (5s)" 1056 5 0.05 0 3 "loss 5%"
+run_test "Client Loss 5% + Network Loss 5% (30s)" 1057 30 0.05 0 3 "loss 5%"
 
-# TEST 10: Client-side Jitter + Network Delay
-run_test "Client Jitter 0.1s + Network Delay 100ms" 1020 30 0 0.1 3 "delay 100ms"
+# TEST 10: Client-side Jitter + Network Delay (1s, 5s, 30s)
+run_test "Client Jitter 0.1s + Network Delay 100ms (1s)" 1058 1 0 0.1 3 "delay 100ms"
+run_test "Client Jitter 0.1s + Network Delay 100ms (5s)" 1059 5 0 0.1 3 "delay 100ms"
+run_test "Client Jitter 0.1s + Network Delay 100ms (30s)" 1060 30 0 0.1 3 "delay 100ms"
 
 # Final cleanup
 clear_netem
