@@ -15,6 +15,7 @@ MSG_INIT = 0
 MSG_DATA = 1
 MSG_HEARTBEAT = 2
 MSG_BATCH = 3
+MSG_ACK = 4
 
 class TinyTelemetryProtocol:
     """
@@ -139,5 +140,5 @@ class TinyTelemetryProtocol:
     @staticmethod
     def msg_type_to_string(msg_type):
         """Convert message type code to string"""
-        types = {MSG_INIT: 'INIT', MSG_DATA: 'DATA', MSG_HEARTBEAT: 'HEARTBEAT', MSG_BATCH: 'BATCH'}
+        types = {MSG_INIT: 'INIT', MSG_DATA: 'DATA', MSG_HEARTBEAT: 'HEARTBEAT', MSG_BATCH: 'BATCH', MSG_ACK: 'ACK'}
         return types.get(msg_type, f'UNKNOWN({msg_type})')

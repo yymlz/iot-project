@@ -9,7 +9,8 @@ import time
 import csv
 import json
 from datetime import datetime
-from protocol import TinyTelemetryProtocol, MSG_INIT, MSG_DATA, MSG_HEARTBEAT
+from protocol import TinyTelemetryProtocol, MSG_INIT, MSG_DATA, MSG_HEARTBEAT, MSG_ACK
+from performance_monitor import PerformanceMonitor
 
 # Maximum UDP application payload size (excluding header)
 MAX_UDP_PAYLOAD = 200  # bytes
@@ -34,6 +35,7 @@ class TelemetryCollector:
         self.sequence_gap_count = 0      # Number of gap events (not total missing)
         self.total_bytes_received = 0    # Total bytes (header + payload)
         self.total_cpu_time_ms = 0       # Total CPU time spent processing
+        self.performance_monitor = PerformanceMonitor()
 
     def start(self):
         """Start the UDP server"""
@@ -110,16 +112,21 @@ class TelemetryCollector:
             header, payload = TinyTelemetryProtocol.parse_message(data)
             arrival_time = time.time()
             
-            # Check payload size constraint (Phase 2 requirement: <= 200 bytes)
-            payload_size = len(payload) if payload else 0
-            if payload_size > MAX_UDP_PAYLOAD:
-                print(f"[WARNING] Payload size {payload_size} exceeds max {MAX_UDP_PAYLOAD} bytes!")
-
             device_id = header['device_id']
             seq_num = header['seq_num']
             timestamp = header['timestamp']
             msg_type = header['msg_type']
             msg_type_str = TinyTelemetryProtocol.msg_type_to_string(msg_type)
+            
+            # Send ACK for DATA and BATCH messages (not INIT or HEARTBEAT)
+            if msg_type in [MSG_DATA, 3]:  # MSG_DATA or MSG_BATCH
+                ack_packet = TinyTelemetryProtocol.create_message(MSG_ACK, device_id, seq_num, timestamp=0, payload=b'')
+                self.socket.sendto(ack_packet, addr)
+
+            # Check payload size constraint (Phase 2 requirement: <= 200 bytes)
+            payload_size = len(payload) if payload else 0
+            if payload_size > MAX_UDP_PAYLOAD:
+                print(f"[WARNING] Payload size {payload_size} exceeds max {MAX_UDP_PAYLOAD} bytes!")
 
             # Initialize device state if new
             if device_id not in self.device_state:
@@ -368,7 +375,8 @@ class TelemetryCollector:
                   f"{state['heartbeat_count']} heartbeats, last seq: {state['last_seq']}")
         
         # Phase 2 Required Metrics
-        print("\n[Phase 2 Metrics]")
+        # getting CPU and memory stats
+        perf_stats = self.performance_monitor.get_stats()
         print("-" * 40)
         
         # bytes_per_report: Average total bytes (payload + header) per reading
@@ -399,6 +407,10 @@ class TelemetryCollector:
         print(f"  total_bytes:          {self.total_bytes_received} bytes")
         print(f"  total_cpu_time:       {self.total_cpu_time_ms:.2f} ms")
         print("=" * 80)
+        print("[PERFORMANCE]")
+        print(f"  CPU Usage:     {perf_stats['cpu_percent']:.2f}%")
+        print(f"  Memory Usage:  {perf_stats['memory_mb']:.2f} MB")
+        print(f"  CPU Time:      {perf_stats['cpu_time_ms']:.2f} ms")
 
 def main():
     """Main entry point"""

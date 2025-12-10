@@ -10,7 +10,7 @@ import json
 import random
 import threading
 from datetime import datetime
-from protocol import TinyTelemetryProtocol, MSG_INIT, MSG_DATA, MSG_HEARTBEAT
+from protocol import TinyTelemetryProtocol, MSG_INIT, MSG_DATA, MSG_HEARTBEAT, MSG_ACK
 
 class TelemetrySensor:
     def __init__(self, device_id, server_host=socket.gethostbyname(socket.gethostname()), server_port=5000):
@@ -18,19 +18,110 @@ class TelemetrySensor:
         self.server_host = server_host
         self.server_port = server_port
         self.socket = None
+        self.ack_socket = None  # Separate socket for receiving ACKs
         self.seq_num = 0
         self.packet_loss_rate = 0.0  # 0.0 = 0%, 0.1 = 10%, 0.15 = 15%
         self.jitter_max = 0.0  # Maximum jitter in seconds (e.g., 0.5 = 500ms)
         self.batch_size = 0  # Number of messages to batch before sending
         self.batch_buffer = []
+        self.pending_packets = {}
+        # Dynamic timeout calculation (RTO = estimatedRTT + 4 * devRTT)
+        self.estimated_rtt = 0.5  # Initial estimate: 500ms
+        self.dev_rtt = 0.1  # Initial deviation: 100ms
+        self.ack_timeout = 0.5  # Will be updated dynamically
+        self.alpha = 0.125  # RTT estimation weight
+        self.beta = 0.25  # Deviation estimation weight
+        self.max_retries = 3
+        self.retransmission_count = 0
+        self.ack_received_count = 0
+        self.total_rtt_samples = 0
+        self.ack_lock = threading.Lock()
+
+    def ack_listener_thread(self):
+        """Thread to listen for ACK messages from server"""
+        while True:
+            try:
+                data, _ = self.ack_socket.recvfrom(1024)
+                header, _ = TinyTelemetryProtocol.parse_message(data)
+                msg_type = header['msg_type']
+                seq_num = header['seq_num']
+
+                if msg_type == MSG_ACK:
+                    current_time = time.time()
+                    with self.ack_lock:
+                        if seq_num in self.pending_packets:
+                            # Calculate sample RTT
+                            send_time = self.pending_packets[seq_num]['send_time']
+                            sample_rtt = current_time - send_time
+                            
+                            # Update RTT estimates (TCP-style)
+                            # estimatedRTT = (1-α) * estimatedRTT + α * sampleRTT
+                            self.estimated_rtt = (1 - self.alpha) * self.estimated_rtt + self.alpha * sample_rtt
+                            # devRTT = (1-β) * devRTT + β * |sampleRTT - estimatedRTT|
+                            self.dev_rtt = (1 - self.beta) * self.dev_rtt + self.beta * abs(sample_rtt - self.estimated_rtt)
+                            # RTO = estimatedRTT + 4 * devRTT
+                            self.ack_timeout = self.estimated_rtt + 4 * self.dev_rtt
+                            
+                            # Track metrics
+                            self.ack_received_count += 1
+                            self.total_rtt_samples += 1
+                            
+                            # Remove from pending
+                            del self.pending_packets[seq_num]
+            except socket.timeout:
+                continue  # Normal timeout, keep listening
+            except Exception:
+                break  # Socket closed, exit thread
+    
+    def retransmission_timer_thread(self):
+        """Thread to check for timed-out packets and retransmit"""
+        while True:
+            try:
+                time.sleep(0.1)  # Check every 100ms
+                current_time = time.time()
+                
+                with self.ack_lock:
+                    for seq_num, packet_info in list(self.pending_packets.items()):
+                        time_elapsed = current_time - packet_info['send_time']
+                        
+                        if time_elapsed > self.ack_timeout:
+                            if packet_info['retry_count'] < self.max_retries:
+                                # Retransmit
+                                self.socket.sendto(packet_info['packet'], packet_info['addr'])
+                                packet_info['send_time'] = current_time
+                                packet_info['retry_count'] += 1
+                                self.retransmission_count += 1
+                                print(f"[{datetime.now().strftime('%H:%M:%S')}] [RETRANSMIT] seq {seq_num} (attempt {packet_info['retry_count']}/{self.max_retries})")
+                            else:
+                                # Max retries exceeded, give up
+                                del self.pending_packets[seq_num]
+                                print(f"[{datetime.now().strftime('%H:%M:%S')}] [LOST] seq {seq_num} after {self.max_retries} retries")
+            except Exception:
+                break  # Exit on error
 
     def connect(self):
         """Create UDP socket"""
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        
+        # Create separate socket for receiving ACKs (bound to receive responses)
+        self.ack_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.ack_socket.bind(('', 0))  # Bind to any available port
+        self.ack_socket.settimeout(0.1)  # Non-blocking with timeout
+        
+        # Get the local port for sending (so server knows where to send ACKs)
+        self.socket = self.ack_socket  # Use same socket for send/receive
+        
         print("[SENSOR] TinyTelemetry Sensor v1")
         print(f"[SENSOR] Device ID: {self.device_id}")
         print(f"[SENSOR] Target server: {self.server_host}:{self.server_port}")
         print("-" * 80)
+        
+        # Start ACK listener and retransmission timer threads
+        ack_thread = threading.Thread(target=self.ack_listener_thread, daemon=True)
+        ack_thread.start()
+        
+        timer_thread = threading.Thread(target=self.retransmission_timer_thread, daemon=True)
+        timer_thread.start()
 
     def send_init(self):
         """Send INIT message to server"""
@@ -100,6 +191,15 @@ class TelemetrySensor:
             self.socket.sendto(message, (self.server_host, self.server_port))
             print(f"[{datetime.now().strftime('%H:%M:%S')}] Sent DATA (seq: {self.seq_num}): "
                   f"temp={temperature:.1f}°C, humidity={humidity:.1f}%")
+            
+            # Add to pending packets for ACK tracking
+            with self.ack_lock:
+                self.pending_packets[current_seq] = {
+                    'packet': message,
+                    'retry_count': 0,
+                    'send_time': time.time(),
+                    'addr': (self.server_host, self.server_port)
+                }
         
         self.seq_num += 1
 
@@ -143,6 +243,16 @@ class TelemetrySensor:
         )
         self.socket.sendto(message, (self.server_host, self.server_port))
         print(f"[{datetime.now().strftime('%H:%M:%S')}] [BATCH] Sent {len(self.batch_buffer)} readings (seq {self.batch_buffer[0]['seq_num']}-{last_seq}) | {len(payload)} bytes")
+        
+        # Add to pending packets for ACK tracking
+        with self.ack_lock:
+            self.pending_packets[last_seq] = {
+                'packet': message,
+                'retry_count': 0,
+                'send_time': time.time(),
+                'addr': (self.server_host, self.server_port)
+            }
+        
         # Don't increment seq_num - readings already have their seq numbers
         self.batch_buffer = []  # Clear buffer
 
@@ -211,8 +321,36 @@ class TelemetrySensor:
                 print(f"[SENSOR] Flushing {len(self.batch_buffer)} remaining readings from batch buffer...")
                 self.send_batch()
 
+            # Wait for final ACKs
+            print("[SENSOR] Waiting for final ACKs...")
+            time.sleep(2)
+            
             print("-" * 80)
             print(f"[SENSOR] Transmission complete. Sent {self.seq_num} messages total.")
+            
+            # Display RDT statistics
+            print("\n" + "=" * 80)
+            print("[RDT STATISTICS]")
+            print("=" * 80)
+            print(f"  Total packets sent:       {self.seq_num}")
+            print(f"  ACKs received:            {self.ack_received_count}")
+            print(f"  Retransmissions:          {self.retransmission_count}")
+            if self.seq_num > 0:
+                print(f"  Retransmission rate:      {(self.retransmission_count / self.seq_num * 100):.2f}%")
+            print(f"  Estimated RTT:            {self.estimated_rtt * 1000:.2f} ms")
+            print(f"  RTT deviation:            {self.dev_rtt * 1000:.2f} ms")
+            print(f"  Current timeout (RTO):    {self.ack_timeout * 1000:.2f} ms")
+            print(f"  Timeout calculation:      RTO = estimatedRTT + 4 * devRTT")
+            print(f"                            = {self.estimated_rtt * 1000:.2f} + 4 * {self.dev_rtt * 1000:.2f}")
+            print(f"                            = {self.ack_timeout * 1000:.2f} ms")
+            
+            with self.ack_lock:
+                unacked = len(self.pending_packets)
+            if unacked > 0:
+                print(f"  Unacknowledged packets:   {unacked} (lost after {self.max_retries} retries)")
+            else:
+                print(f"  Unacknowledged packets:   0 (100% delivery success!)")
+            print("=" * 80)
 
         except KeyboardInterrupt:
             print("\n[SENSOR] Interrupted by user")
