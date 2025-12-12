@@ -142,7 +142,8 @@ class TelemetrySensor:
             self.seq_num += 1  # Still increment seq so server detects gap
             return  # Don't send the packet
 
-        if self.batch_size > 0:
+        # Only use batching if batch_size > 1
+        if self.batch_size > 1:
             """Buffer reading for batch sending"""
             reading = {
                 'seq_num': self.seq_num,
@@ -182,6 +183,14 @@ class TelemetrySensor:
                 self.socket.sendto(msg, (self.server_host, self.server_port))
                 print(f"[{datetime.now().strftime('%H:%M:%S')}] Sent DATA (seq: {seq}, delay: {delay_time*1000:.0f}ms): "
                       f"temp={temp:.1f}°C, humidity={hum:.1f}%")
+                # Add to pending packets for ACK tracking (after sending)
+                with self.ack_lock:
+                    self.pending_packets[seq] = {
+                        'packet': msg,
+                        'retry_count': 0,
+                        'send_time': time.time(),
+                        'addr': (self.server_host, self.server_port)
+                    }
             
             thread = threading.Thread(target=delayed_send, args=(message, current_seq, delay, temperature, humidity))
             thread.daemon = True

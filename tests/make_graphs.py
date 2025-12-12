@@ -212,6 +212,166 @@ print(f"✓ Saved: {output_dir}/duplicate_vs_loss.png")
 plt.close()
 
 # ============================================================================
+# GRAPH 3: Actual Loss Detection (gap_flag analysis)
+# ============================================================================
+
+# Calculate actual packet loss from gap_flag
+loss_detection_stats = loss_df.groupby('device_id').agg({
+    'gap_flag': lambda x: (x.sum() / len(x) * 100),
+    'network_loss': 'first'
+}).reset_index()
+
+loss_detection_stats.columns = ['device_id', 'detected_loss_rate', 'network_loss']
+
+# Group by network loss
+loss_detection_grouped = loss_detection_stats.groupby('network_loss').agg({
+    'detected_loss_rate': 'mean',
+    'device_id': 'count'
+}).reset_index()
+
+loss_detection_grouped.columns = ['network_loss', 'avg_detected_loss', 'num_tests']
+loss_detection_grouped = loss_detection_grouped.sort_values('network_loss')
+
+plt.figure(figsize=(10, 6))
+x = loss_detection_grouped['network_loss']
+plt.plot(x, x, 'k--', linewidth=2, label='Expected Loss', alpha=0.5)
+plt.plot(
+    loss_detection_grouped['network_loss'],
+    loss_detection_grouped['avg_detected_loss'],
+    marker='s',
+    linewidth=3,
+    markersize=12,
+    color='#9b59b6',
+    markeredgecolor='purple',
+    markeredgewidth=2,
+    label='Detected Loss (gap_flag)'
+)
+
+plt.xlabel('Network Loss Rate (%)', fontsize=14, fontweight='bold')
+plt.ylabel('Detected Loss Rate (%)', fontsize=14, fontweight='bold')
+plt.title('Detected vs Expected Packet Loss', fontsize=16, fontweight='bold', pad=20)
+plt.legend(fontsize=12)
+plt.grid(True, alpha=0.3, linestyle='--')
+
+# Add value labels
+for _, row in loss_detection_grouped.iterrows():
+    plt.text(
+        row['network_loss'],
+        row['avg_detected_loss'] + 0.2,
+        f"{row['avg_detected_loss']:.2f}%",
+        ha='center',
+        va='bottom',
+        fontweight='bold',
+        fontsize=10
+    )
+
+plt.tight_layout()
+plt.savefig(f'{output_dir}/loss_detection.png', dpi=300, bbox_inches='tight')
+print(f"✓ Saved: {output_dir}/loss_detection.png")
+plt.close()
+
+# ============================================================================
+# GRAPH 4: Duplicate Detection Breakdown
+# ============================================================================
+
+# Get detailed duplicate stats per device
+dup_detail = df.groupby('device_id').agg({
+    'duplicate_flag': ['sum', 'count', lambda x: (x.sum() / len(x) * 100)]
+}).reset_index()
+
+dup_detail.columns = ['device_id', 'duplicate_count', 'total_packets', 'duplicate_rate']
+
+# Add interval mapping
+dup_detail['interval'] = dup_detail['device_id'].map(interval_mapping)
+
+# Filter to devices with duplicates
+dup_detail = dup_detail[dup_detail['duplicate_count'] > 0]
+
+if len(dup_detail) > 0:
+    plt.figure(figsize=(12, 6))
+    x_pos = range(len(dup_detail))
+    
+    plt.bar(x_pos, dup_detail['duplicate_count'], color='#e67e22', edgecolor='black', linewidth=1.5)
+    plt.xlabel('Device ID', fontsize=14, fontweight='bold')
+    plt.ylabel('Number of Duplicate Packets', fontsize=14, fontweight='bold')
+    plt.title('Duplicate Packet Count by Device', fontsize=16, fontweight='bold', pad=20)
+    plt.xticks(x_pos, dup_detail['device_id'], rotation=45, ha='right')
+    plt.grid(axis='y', alpha=0.3, linestyle='--')
+    
+    # Add value labels
+    for i, row in enumerate(dup_detail.iterrows()):
+        count = row[1]['duplicate_count']
+        rate = row[1]['duplicate_rate']
+        plt.text(i, count + 0.1, f"{int(count)}\n({rate:.1f}%)", 
+                ha='center', va='bottom', fontsize=8, fontweight='bold')
+    
+    plt.tight_layout()
+    plt.savefig(f'{output_dir}/duplicate_breakdown.png', dpi=300, bbox_inches='tight')
+    print(f"✓ Saved: {output_dir}/duplicate_breakdown.png")
+    plt.close()
+else:
+    print(f"⚠ No duplicates detected - skipping duplicate breakdown graph")
+
+# ============================================================================
+# GRAPH 5: Retransmission Rate Analysis
+# ============================================================================
+
+# Check if retransmit_flag column exists
+if 'retransmit_flag' in df.columns:
+    # Calculate retransmission stats
+    retransmit_stats = loss_df.groupby('device_id').agg({
+        'retransmit_flag': lambda x: (x.sum() / len(x) * 100),
+        'network_loss': 'first'
+    }).reset_index()
+    
+    retransmit_stats.columns = ['device_id', 'retransmit_rate', 'network_loss']
+    
+    # Group by network loss
+    retransmit_grouped = retransmit_stats.groupby('network_loss').agg({
+        'retransmit_rate': 'mean',
+        'device_id': 'count'
+    }).reset_index()
+    
+    retransmit_grouped.columns = ['network_loss', 'avg_retransmit_rate', 'num_tests']
+    retransmit_grouped = retransmit_grouped.sort_values('network_loss')
+    
+    plt.figure(figsize=(10, 6))
+    plt.plot(
+        retransmit_grouped['network_loss'],
+        retransmit_grouped['avg_retransmit_rate'],
+        marker='D',
+        linewidth=3,
+        markersize=10,
+        color='#3498db',
+        markeredgecolor='navy',
+        markeredgewidth=2
+    )
+    
+    plt.xlabel('Network Loss Rate (%)', fontsize=14, fontweight='bold')
+    plt.ylabel('Retransmission Rate (%)', fontsize=14, fontweight='bold')
+    plt.title('RDT Retransmission Rate vs Network Loss', fontsize=16, fontweight='bold', pad=20)
+    plt.grid(True, alpha=0.3, linestyle='--')
+    
+    # Add value labels
+    for _, row in retransmit_grouped.iterrows():
+        plt.text(
+            row['network_loss'],
+            row['avg_retransmit_rate'] + 0.1,
+            f"{row['avg_retransmit_rate']:.2f}%",
+            ha='center',
+            va='bottom',
+            fontweight='bold',
+            fontsize=10
+        )
+    
+    plt.tight_layout()
+    plt.savefig(f'{output_dir}/retransmit_rate.png', dpi=300, bbox_inches='tight')
+    print(f"✓ Saved: {output_dir}/retransmit_rate.png")
+    plt.close()
+else:
+    print("⚠ No retransmit_flag column - skipping retransmission graph")
+
+# ============================================================================
 # Summary
 # ============================================================================
 
@@ -224,11 +384,20 @@ print(f"\nInterval analysis:")
 for _, row in interval_stats.iterrows():
     print(f"  {int(row['interval'])}s interval: {row['packet_bytes']:.1f} bytes/report ({int(row['device_id'])} tests)")
 
-print(f"\nLoss vs Duplicate analysis:")
+print("\nLoss vs Duplicate analysis:")
 for _, row in loss_stats.iterrows():
     print(f"  {int(row['network_loss'])}% loss: {row['avg_duplicate_rate']:.2f}% duplicates ({int(row['num_tests'])} tests)")
+
+print("\nLoss Detection analysis:")
+for _, row in loss_detection_grouped.iterrows():
+    print(f"  {int(row['network_loss'])}% expected: {row['avg_detected_loss']:.2f}% detected ({int(row['num_tests'])} tests)")
 
 print("\nGenerated graphs:")
 print(f"  📊 {output_dir}/bytes_vs_interval.png")
 print(f"  📊 {output_dir}/duplicate_vs_loss.png")
+print(f"  📊 {output_dir}/loss_detection.png")
+if len(dup_detail) > 0:
+    print(f"  📊 {output_dir}/duplicate_breakdown.png")
+if 'retransmit_flag' in df.columns:
+    print(f"  📊 {output_dir}/retransmit_rate.png")
 print("="*60)

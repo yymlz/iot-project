@@ -22,6 +22,7 @@ class TelemetryCollector:
         self.socket = None
         # Per-device state
         self.device_state = {}  # device_id -> {'last_seq': num, 'last_timestamp': ts}
+        self.received_sequences = {}  # Track all received seq nums per device for duplicate detection
         self.csv_file = None
         self.csv_writer = None
         self.total_expected = 0
@@ -32,6 +33,7 @@ class TelemetryCollector:
         
         # Phase 2 Metrics
         self.total_duplicates = 0        # Count of duplicate messages
+        self.total_retransmits = 0       # Count of retransmissions (duplicates due to RDT)
         self.sequence_gap_count = 0      # Number of gap events (not total missing)
         self.total_bytes_received = 0    # Total bytes (header + payload)
         self.total_cpu_time_ms = 0       # Total CPU time spent processing
@@ -52,8 +54,8 @@ class TelemetryCollector:
         csv_filename = f"telemetry_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
         self.csv_file = open(csv_filename, 'w', newline='')
         self.csv_writer = csv.writer(self.csv_file)
-        # Write header row with duplicate_flag and gap_flag columns
-        self.csv_writer.writerow(['timestamp', 'device_id', 'seq_num', 'msg_type', 'temperature', 'humidity', 'duplicate_flag', 'gap_flag', 'packet_bytes'])
+        # Write header row with duplicate_flag, gap_flag, retransmit_flag columns
+        self.csv_writer.writerow(['timestamp', 'device_id', 'seq_num', 'msg_type', 'temperature', 'humidity', 'duplicate_flag', 'gap_flag', 'retransmit_flag', 'packet_bytes'])
         self.csv_file.flush()
         print(f"[SERVER] Logging to: {csv_filename}")
 
@@ -137,15 +139,19 @@ class TelemetryCollector:
                     'last_seen': arrival_time,
                     'heartbeat_count': 0
                 }
+                self.received_sequences[device_id] = set()
 
             state = self.device_state[device_id]
             duplicate_flag = False
+            retransmit_flag = False
             gap_flag = False
 
-            # Check for duplicate (skip for heartbeats - they all use seq 0)
-            if msg_type != MSG_HEARTBEAT and seq_num == state['last_seq']:
+            # Check for duplicate/retransmission (skip for heartbeats - they all use seq 0)
+            if msg_type != MSG_HEARTBEAT and seq_num in self.received_sequences[device_id]:
                 duplicate_flag = True
-                self.total_duplicates += 1  # Track duplicate count
+                retransmit_flag = True  # Assume duplicate is a retransmission from RDT
+                self.total_duplicates += 1
+                self.total_retransmits += 1
 
             # Check for sequence gap (skip for BATCH and HEARTBEAT messages)
             if msg_type not in [3, MSG_HEARTBEAT] and state['last_seq'] != -1 and seq_num > state['last_seq'] + 1:
@@ -193,10 +199,18 @@ class TelemetryCollector:
                     
                     for reading in readings:
                         reading_seq = reading.get('seq_num', 0)
+                        reading_gap_flag = False
+                        reading_duplicate_flag = False
+                        
+                        # Check for duplicate reading
+                        if reading_seq in self.received_sequences[device_id]:
+                            reading_duplicate_flag = True
+                            print(f"            [DUPLICATE] Seq {reading_seq} already received")
                         
                         # Check for gap within batch (detect if first reading isn't seq 1, or any subsequent gap)
                         if reading_seq > last_reading_seq + 1:
                             gap_size = reading_seq - last_reading_seq - 1
+                            reading_gap_flag = True
                             print(f"            [LOST] Missing {gap_size} reading(s) between seq {last_reading_seq} and {reading_seq}")
                             self.total_lost += gap_size
                             self.sequence_gap_count += 1
@@ -213,10 +227,15 @@ class TelemetryCollector:
                                 'BATCH_DATA',
                                 reading.get('temperature'),
                                 reading.get('humidity'),
-                                0,  # duplicate_flag (batch readings are pre-validated)
-                                0,  # gap_flag (handled separately)
+                                1 if reading_duplicate_flag else 0,  # duplicate_flag
+                                1 if reading_gap_flag else 0,  # gap_flag
+                                1 if retransmit_flag else 0,  # retransmit_flag (batch-level retransmission)
                                 packet_bytes  # bytes for this packet
                             ])
+                        
+                        # Track this reading sequence as received
+                        if not reading_duplicate_flag:
+                            self.received_sequences[device_id].add(reading_seq)
                         
                         last_reading_seq = reading_seq
                     
@@ -248,6 +267,10 @@ class TelemetryCollector:
 
             # Note: CSV writing moved to display_packet() to avoid duplicates from reorder buffer
             
+            # Track this sequence number as received (for duplicate/retransmit detection)
+            if msg_type != MSG_HEARTBEAT and not duplicate_flag:
+                self.received_sequences[device_id].add(seq_num)
+            
             # Record CPU time for this packet
             cpu_end = time.perf_counter()
             cpu_time_ms = (cpu_end - cpu_start) * 1000
@@ -259,6 +282,7 @@ class TelemetryCollector:
                 'timestamp': timestamp,
                 'arrival_time': arrival_time,
                 'duplicate_flag': duplicate_flag,
+                'retransmit_flag': retransmit_flag,
                 'gap_flag': gap_flag,
                 'msg_type': msg_type_str,
                 'payload': payload_str,
@@ -315,6 +339,7 @@ class TelemetryCollector:
                 humidity,
                 1 if duplicate_flag else 0,
                 1 if gap_flag else 0,
+                1 if packet_info.get('retransmit_flag', False) else 0,
                 packet_bytes
             ])
             self.csv_file.flush()
@@ -390,6 +415,10 @@ class TelemetryCollector:
         total_packets = self.total_received + self.total_duplicates
         duplicate_rate = self.total_duplicates / total_packets if total_packets > 0 else 0
         print(f"  duplicate_rate:       {duplicate_rate:.4f} ({self.total_duplicates} duplicates)")
+        
+        # retransmit_rate: Fraction of packets that were retransmissions
+        retransmit_rate = self.total_retransmits / total_packets if total_packets > 0 else 0
+        print(f"  retransmit_rate:      {retransmit_rate:.4f} ({self.total_retransmits} retransmits)")
         
         # sequence_gap_count: Number of missing sequences detected (gap events)
         print(f"  sequence_gap_count:   {self.sequence_gap_count}")
