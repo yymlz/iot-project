@@ -356,10 +356,11 @@ class TelemetryCollector:
                     data, addr = self.socket.recvfrom(1024)
                     packet_info = self.process_packet(data, addr)
                     
-                    # Add to buffer for reordering (skip BATCH, HEARTBEAT, and DUPLICATE packets)
+                    # Add to buffer for reordering (skip BATCH, HEARTBEAT, INIT, and DUPLICATE packets)
                     # Duplicates have already been counted/tracked, no need to buffer them
+                    # INIT (seq 0) is displayed immediately and should not be buffered
                     if (packet_info and 
-                        packet_info['msg_type'] not in ['BATCH', 'HEARTBEAT'] and 
+                        packet_info['msg_type'] not in ['BATCH', 'HEARTBEAT', 'INIT'] and 
                         not packet_info['duplicate_flag']):
                         packet_info['buffer_time'] = time.time()
                         self.add_to_buffer(packet_info)
