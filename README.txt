@@ -54,7 +54,7 @@ TinyTelemetry is a **lightweight, reliable IoT telemetry protocol** designed for
 
 ### Protocol Features
 - **5 Message Types** - INIT, DATA, BATCH, HEARTBEAT, ACK
-- **Compact Header** - Only 10 bytes (magic number 0xAA55, version, type, device_id, seq, timestamp)
+- **Compact Header** - Only 10 bytes ('!BHHIB' without magic number, version, type, device_id, seq, timestamp)
 - **Batch Processing** - Send up to 30 readings in one packet (auto-splits at 200-byte limit)
 - **Heartbeat Mechanism** - 12-second interval, 30-second device timeout detection
 - **JSON Payload** - Human-readable sensor data encoding

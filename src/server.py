@@ -1,8 +1,3 @@
-"""
-TinyTelemetry Server (Collector)
-Receives and logs telemetry data from IoT sensors
-"""
-
 import socket
 import sys
 import time
@@ -92,7 +87,7 @@ class TelemetryCollector:
             for packet in ready_packets:
                 self.display_packet(packet)
 
-    # Bonus feature: Check for device timeouts
+    # feature: Check for device timeouts
     def check_device_timeout(self, timeout=30):
         """Check for devices that have timed out"""
         current_time = time.time()
@@ -153,7 +148,7 @@ class TelemetryCollector:
                 self.total_duplicates += 1
                 self.total_retransmits += 1
 
-            # Check for sequence gap (skip for BATCH and HEARTBEAT messages)
+            # Check for sequence gap (skip for HEARTBEAT messages)
             if msg_type not in [3, MSG_HEARTBEAT] and state['last_seq'] != -1 and seq_num > state['last_seq'] + 1:
                 gap_flag = True
                 gap_size = seq_num - state['last_seq'] - 1
@@ -164,16 +159,8 @@ class TelemetryCollector:
             if gap_flag:
                 self.total_lost += gap_size
             
-            # Log to console - packet header first
-            flags_str = ""
-            if duplicate_flag:
-                flags_str += "[DUPLICATE] "
-            if gap_flag:
-                flags_str += "[GAP] "
-
-            print(f"[{datetime.now().strftime('%H:%M:%S')}] {flags_str}"
-                  f"Device {device_id} | Seq {seq_num} | Type: {msg_type_str} | "
-                  f"From {addr[0]}:{addr[1]}")
+            # DON'T log to console here - will be done in display_packet() after reordering
+            # to prevent double-logging
 
             # Update state and handle message type specifics
             if not duplicate_flag:
@@ -184,12 +171,18 @@ class TelemetryCollector:
                 state['packet_count'] += 1
                 state['last_seen'] = arrival_time
                 
-                # Track heartbeat count
+                # Track heartbeat count (display immediately - not buffered)
                 if msg_type == MSG_HEARTBEAT:
                     state['heartbeat_count'] += 1
+                    print(f"[{datetime.now().strftime('%H:%M:%S')}] Device {device_id} | Seq {seq_num} | Type: {msg_type_str} | From {addr[0]}:{addr[1]}")
                     print(f"          ♥ Device is still alive (Total heartbeats: {state['heartbeat_count']})")
                     self.total_received += 1  # Count heartbeat as 1 reading
+                    if self.total_received > 0:
+                        loss_rate = (self.total_lost / (self.total_received + self.total_lost)) * 100
+                        print(f"[STATISTICS] Total Received: {self.total_received}, Total Lost: {self.total_lost}, Loss Rate: {loss_rate:.2f}%")
                 elif msg_type == 3:  # BATCH
+                    # Display BATCH header immediately (not buffered)
+                    print(f"[{datetime.now().strftime('%H:%M:%S')}] Device {device_id} | Seq {seq_num} | Type: BATCH | From {addr[0]}:{addr[1]}")
                     readings = json.loads(payload.decode('utf-8'))
                     print(f"          [BATCH] {len(readings)} readings:")
                     
@@ -243,9 +236,18 @@ class TelemetryCollector:
                     state['last_reading_seq'] = last_reading_seq
                     self.csv_file.flush()
                     self.total_received += len(readings)  # Count each reading in batch
+                    # Display statistics after batch
+                    if self.total_received > 0:
+                        loss_rate = (self.total_lost / (self.total_received + self.total_lost)) * 100
+                        print(f"[STATISTICS] Total Received: {self.total_received}, Total Lost: {self.total_lost}, Loss Rate: {loss_rate:.2f}%")
                 elif msg_type == MSG_INIT:
+                    # Display INIT immediately (not buffered)
+                    print(f"[{datetime.now().strftime('%H:%M:%S')}] Device {device_id} | Seq {seq_num} | Type: {msg_type_str} | From {addr[0]}:{addr[1]}")
                     print("          >> New sensor initialized")
                     self.total_received += 1  # Count INIT as 1
+                    if self.total_received > 0:
+                        loss_rate = (self.total_lost / (self.total_received + self.total_lost)) * 100
+                        print(f"[STATISTICS] Total Received: {self.total_received}, Total Lost: {self.total_lost}, Loss Rate: {loss_rate:.2f}%")
                 elif msg_type == MSG_DATA:
                     self.total_received += 1  # Count single DATA as 1 reading
             
@@ -257,17 +259,10 @@ class TelemetryCollector:
                 except:
                     payload_str = f"<binary:{len(payload)}bytes>"
 
-            if payload_str:
-                print(f"          Payload: {payload_str}")
-
-            # Statistics at the end
-            if self.total_received > 0:
-                loss_rate = (self.total_lost / (self.total_received + self.total_lost)) * 100
-                print(f"[STATISTICS] Total Received: {self.total_received}, Total Lost: {self.total_lost}, Loss Rate: {loss_rate:.2f}%")
-
-            # Note: CSV writing moved to display_packet() to avoid duplicates from reorder buffer
+            # DON'T print payload or statistics here - will be done in display_packet()
             
             # Track this sequence number as received (for duplicate/retransmit detection)
+            # Do this BEFORE adding to buffer so buffer can detect duplicates
             if msg_type != MSG_HEARTBEAT and not duplicate_flag:
                 self.received_sequences[device_id].add(seq_num)
             
@@ -286,7 +281,8 @@ class TelemetryCollector:
                 'gap_flag': gap_flag,
                 'msg_type': msg_type_str,
                 'payload': payload_str,
-                'packet_bytes': packet_bytes
+                'packet_bytes': packet_bytes,
+                'addr': addr  # Include addr here
             }
 
         except Exception as e:
@@ -343,6 +339,11 @@ class TelemetryCollector:
                 packet_bytes
             ])
             self.csv_file.flush()
+        
+        # Print statistics after each packet display
+        if self.total_received > 0:
+            loss_rate = (self.total_lost / (self.total_received + self.total_lost)) * 100
+            print(f"[STATISTICS] Total Received: {self.total_received}, Total Lost: {self.total_lost}, Loss Rate: {loss_rate:.2f}%")
 
     def run(self):
         """Main server loop"""
@@ -355,11 +356,26 @@ class TelemetryCollector:
                     data, addr = self.socket.recvfrom(1024)
                     packet_info = self.process_packet(data, addr)
                     
-                    # Add to buffer for reordering (skip BATCH and HEARTBEAT packets)
-                    if packet_info and packet_info['msg_type'] not in ['BATCH', 'HEARTBEAT']:
+                    # Add to buffer for reordering (skip BATCH, HEARTBEAT, and DUPLICATE packets)
+                    # Duplicates have already been counted/tracked, no need to buffer them
+                    if (packet_info and 
+                        packet_info['msg_type'] not in ['BATCH', 'HEARTBEAT'] and 
+                        not packet_info['duplicate_flag']):
                         packet_info['buffer_time'] = time.time()
-                        packet_info['addr'] = addr
                         self.add_to_buffer(packet_info)
+                    elif packet_info and packet_info['duplicate_flag']:
+                        # Display duplicates immediately (don't reorder them)
+                        flags_str = "[DUPLICATE] "
+                        if packet_info['gap_flag']:
+                            flags_str += "[GAP] "
+                        print(f"[{datetime.now().strftime('%H:%M:%S')}] {flags_str}"
+                              f"Device {packet_info['device_id']} | Seq {packet_info['seq']} | "
+                              f"Type: {packet_info['msg_type']} | From {packet_info['addr'][0]}:{packet_info['addr'][1]}")
+                        if packet_info['payload']:
+                            print(f"          Payload: {packet_info['payload']}")
+                        if self.total_received > 0:
+                            loss_rate = (self.total_lost / (self.total_received + self.total_lost)) * 100
+                            print(f"[STATISTICS] Total Received: {self.total_received}, Total Lost: {self.total_lost}, Loss Rate: {loss_rate:.2f}%")
                     
                     # Check buffer every 3 seconds even while receiving
                     if time.time() - last_buffer_check >= 3.0:

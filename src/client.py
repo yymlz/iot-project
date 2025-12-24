@@ -1,8 +1,3 @@
-"""
-TinyTelemetry Client (Sensor)
-Simulates an IoT sensor sending telemetry data
-"""
-
 import socket
 import sys
 import time
@@ -180,10 +175,8 @@ class TelemetrySensor:
             # Create a thread that waits, then sends
             def delayed_send(msg, seq, delay_time, temp, hum):
                 time.sleep(delay_time)
-                self.socket.sendto(msg, (self.server_host, self.server_port))
-                print(f"[{datetime.now().strftime('%H:%M:%S')}] Sent DATA (seq: {seq}, delay: {delay_time*1000:.0f}ms): "
-                      f"temp={temp:.1f}°C, humidity={hum:.1f}%")
-                # Add to pending packets for ACK tracking (after sending)
+                # Add pending entry BEFORE sending to avoid race where ACK arrives
+                # before the pending entry exists.
                 with self.ack_lock:
                     self.pending_packets[seq] = {
                         'packet': msg,
@@ -191,17 +184,16 @@ class TelemetrySensor:
                         'send_time': time.time(),
                         'addr': (self.server_host, self.server_port)
                     }
+                self.socket.sendto(msg, (self.server_host, self.server_port))
+                print(f"[{datetime.now().strftime('%H:%M:%S')}] Sent DATA (seq: {seq}, delay: {delay_time*1000:.0f}ms): "
+                      f"temp={temp:.1f}°C, humidity={hum:.1f}%")
             
             thread = threading.Thread(target=delayed_send, args=(message, current_seq, delay, temperature, humidity))
             thread.daemon = True
             thread.start()
         else:
             # No jitter - send immediately
-            self.socket.sendto(message, (self.server_host, self.server_port))
-            print(f"[{datetime.now().strftime('%H:%M:%S')}] Sent DATA (seq: {self.seq_num}): "
-                  f"temp={temperature:.1f}°C, humidity={humidity:.1f}%")
-            
-            # Add to pending packets for ACK tracking
+            # Add to pending packets BEFORE sending to avoid ACK race
             with self.ack_lock:
                 self.pending_packets[current_seq] = {
                     'packet': message,
@@ -209,6 +201,9 @@ class TelemetrySensor:
                     'send_time': time.time(),
                     'addr': (self.server_host, self.server_port)
                 }
+            self.socket.sendto(message, (self.server_host, self.server_port))
+            print(f"[{datetime.now().strftime('%H:%M:%S')}] Sent DATA (seq: {self.seq_num}): "
+                  f"temp={temperature:.1f}°C, humidity={humidity:.1f}%")
         
         self.seq_num += 1
 
@@ -252,8 +247,7 @@ class TelemetrySensor:
         )
         self.socket.sendto(message, (self.server_host, self.server_port))
         print(f"[{datetime.now().strftime('%H:%M:%S')}] [BATCH] Sent {len(self.batch_buffer)} readings (seq {self.batch_buffer[0]['seq_num']}-{last_seq}) | {len(payload)} bytes")
-        
-        # Add to pending packets for ACK tracking
+        # Add to pending packets for ACK tracking BEFORE sending to avoid race
         with self.ack_lock:
             self.pending_packets[last_seq] = {
                 'packet': message,
@@ -261,6 +255,7 @@ class TelemetrySensor:
                 'send_time': time.time(),
                 'addr': (self.server_host, self.server_port)
             }
+        # Note: packet was already sent above; keeping ordering consistent
         
         # Don't increment seq_num - readings already have their seq numbers
         self.batch_buffer = []  # Clear buffer
